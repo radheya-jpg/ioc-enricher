@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ioc-enricher"
+version = "1.0.0"
+description = "Check IPs, domains, and file hashes against multiple threat intel sources at once and get a single combined verdict."
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "httpx>=0.27",
+    "click>=8.1",
+    "rich>=13.7",
+    "tenacity>=8.2",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+]
+
+[project.scripts]
+ioc-enrich = "enrich:main"
+
+[tool.setuptools]
+py-modules = [
+    "enrich", "config", "cache", "ioc_type", "scorer",
+    "report", "logger", "reliability",
+]
+
+[tool.setuptools.packages.find]
+include = ["sources*"]

@@ -1,0 +1,29 @@
+# IOC Enricher — scoring configuration
+#
+# Tune how much each source's verdict is trusted, and where the
+# verdict thresholds sit. Edit this file and re-run — no code changes
+# or redeploy needed.
+#
+# source_weights: relative trust in each source's "malicious" signal.
+#   Higher = counts for more in the combined score. 1.0 is neutral.
+#   A source not listed here defaults to 1.0 (see scorer.py fallback).
+#
+# thresholds: the combined score (0.0-1.0) needed to reach each verdict.
+#   Must be in descending order. "malicious" is checked first, then
+#   "suspicious"; anything below "suspicious" is CLEAN.
+
+source_weights:
+  AbuseIPDB: 1.0
+  VirusTotal: 1.2
+  Shodan: 0.6
+  # Lowered from 0.9: OTX's pulse count measures how often something is
+  # MENTIONED in threat writeups, not how often it's actually malicious.
+  # Popular infrastructure (CDNs, DNS resolvers) racks up mentions just
+  # from being widely used — attackers route traffic through it, but
+  # that's not the infrastructure's fault. See allowlist.txt for the
+  # complementary fix (known-benign entries skip scoring entirely).
+  OTX: 0.4
+
+thresholds:
+  malicious: 0.7
+  suspicious: 0.35

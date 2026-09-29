@@ -1,0 +1,9 @@
+ioc,ioc_type,verdict,score,sources_used,sources_total,flagged_by
+8.8.8.8,ipv4,CLEAN,0.0,0,0,
+1.1.1.1,ipv4,CLEAN,0.0,0,0,
+google.com,domain,CLEAN,0.0,0,0,
+cloudflare.com,domain,CLEAN,0.0,0,0,
+wikipedia.org,domain,CLEAN,0.0,0,0,
+d41d8cd98f00b204e9800998ecf8427e,md5,CLEAN,0.0,2,4,
+mitwpu.edu.in,domain,CLEAN,0.0,2,4,
+marichsolar.in,domain,CLEAN,0.0,2,4,

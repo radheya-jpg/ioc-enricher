@@ -1,0 +1,28 @@
+# IOC Enricher — allowlist
+#
+# Known-benign infrastructure that gets force-marked CLEAN regardless
+# of what threat-intel sources report. This exists because community
+# feeds like OTX count MENTIONS in threat writeups, not actual malice —
+# and major public infrastructure (DNS resolvers, CDNs, huge sites)
+# gets mentioned constantly just because attackers route traffic
+# through it, not because the infrastructure itself is malicious.
+#
+# One entry per line. IPs and domains only (hashes aren't allowlisted —
+# a specific file being "known good" isn't the same kind of judgment).
+# Domains match subdomains too (google.com also matches mail.google.com).
+
+# Public DNS resolvers
+8.8.8.8
+8.8.4.4
+1.1.1.1
+1.0.0.1
+9.9.9.9
+149.112.112.112
+
+# Major CDNs / cloud infra often flagged just for being "everywhere"
+cloudflare.com
+google.com
+wikipedia.org
+microsoft.com
+amazonaws.com
+akamai.net
