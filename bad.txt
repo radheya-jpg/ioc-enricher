@@ -1,0 +1,7 @@
+# Candidate malicious indicators from recent public threat-intelligence reporting.
+# Re-verify each indicator with your sources before treating these as ground truth.
+45.58.184.12
+185.215.113.206
+47.95.207.79
+121.37.255.60
+139.198.183.44

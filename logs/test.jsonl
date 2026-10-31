@@ -1,0 +1,2 @@
+{"timestamp": "2026-08-20T20:04:45+0530", "level": "INFO", "logger": "ioc_enricher.enrich", "message": "enriching IOC", "ioc": "8.8.8.8", "ioc_type": "ipv4"}
+{"timestamp": "2026-08-20T20:04:45+0530", "level": "INFO", "logger": "ioc_enricher.enrich", "message": "verdict reached", "ioc": "8.8.8.8", "verdict": "CLEAN", "score": 0.0}

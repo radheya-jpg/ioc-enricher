@@ -1,82 +1,75 @@
-# IOC Enricher
+# IOC Enricher for Splunk
 
-Check an IP, domain, or file hash against multiple threat intel sources at once — AbuseIPDB, VirusTotal, Shodan, and AlienVault OTX — and get back a single combined verdict instead of checking each one manually.
+Adds `| iocenrich field=<field>` to Splunk search, plus a sourcetype for the enricher JSON log.
+Tested end to end through Splunk chunked protocol with stub sources; not yet tested inside a real Splunk instance.
 
-```
-$ ioc-enrich 185.220.101.45
+## 1. Prepare the project (once)
+- Use the patched `enrich.py` (passes the IOC type to the scorer, adds `--dump-dataset`).
+- Use the patched `pyproject.toml`: `allowlist` was missing from `py-modules`, so an installed `ioc-enrich` would fail with ModuleNotFoundError.
+- Copy your `scoring.yaml` (already in `default/`) and `allowlist.txt` next to each other in `default/`. pip does not install data files, and the command points the enricher at these copies.
 
-╭─ 185.220.101.45 [ipv4] ─╮
-│ MALICIOUS  (score: 0.87) │
-│ Flagged by 3/4 sources   │
-╰──────────────────────────╯
-┏━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Source     ┃ Status ┃ Malicious? ┃ Confidence ┃ Summary                 ┃
-┡━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ AbuseIPDB  │ ok     │ YES        │ 0.92       │ Abuse confidence 92%    │
-│ VirusTotal │ ok     │ YES        │ 0.81       │ 14 malicious / 70 vendors│
-│ Shodan     │ ok     │ no         │ 0.10       │ 2 open ports, 0 CVEs    │
-│ OTX        │ ok     │ YES        │ 0.60       │ Referenced in 6 pulses  │
-└────────────┴────────┴────────────┴────────────┴─────────────────────────┘
-```
+## 2. Vendor dependencies into lib/
+Splunk runs the command with its own bundled Python, so dependencies must ship inside the app.
 
-## Why
+    $SPLUNK_HOME/bin/splunk cmd python --version        # note the version, probably 3.9
+    cd ioc_enricher
+    pip install --target lib splunk-sdk
+    pip install --target lib --python-version 3.9 --only-binary=:all: httpx click rich tenacity pyyaml
+    pip install --target lib --no-deps /path/to/ioc-enricher   # folder containing pyproject.toml
+    cp /path/to/ioc-enricher/allowlist.txt default/
 
-SOC analysts manually check IOCs against multiple threat intel sources dozens of times a day — same input, different tabs, different formats, then mentally combine the results. This automates that: one query, fired concurrently against every source, combined into one weighted verdict.
+Use the version printed on the first line for --python-version. Newer click and rich releases drop old Pythons.
 
-## Features
+## 3. API keys
+Splunk child processes inherit the environment of splunkd. Add one NAME=value per line to
+$SPLUNK_HOME/etc/splunk-launch.conf, then restart Splunk:
 
-- **Multi-source, concurrent**: queries all 4 sources at once (async), not sequentially
-- **Weighted consensus scoring**: combines each source's verdict into one MALICIOUS / SUSPICIOUS / CLEAN score — weights and thresholds are tunable in `scoring.yaml`, no code changes needed
-- **Production-grade reliability**: per-source rate limiting (won't blow through free-tier limits), retry with exponential backoff on transient failures, circuit breaker on repeated failures
-- **Structured logging**: `--verbose` for live debug output, `--log-file` for JSON logs suitable for SIEM ingestion
-- **Batch mode**: process a list of IOCs concurrently, with optional CSV summary export
-- **Two cache backends**: flat-file (default, zero setup) or SQLite (better for high-volume/batch use)
-- **44+ tests, fully mocked**: the whole pipeline is validated without needing live API keys, via `respx`-mocked HTTP responses
-- **Cross-version**: tested on Python 3.8 through 3.12 in CI
+    ABUSEIPDB_API_KEY=...
+    VT_API_KEY=...
+    SHODAN_API_KEY=...
+    OTX_API_KEY=...
+    IOC_ENRICHER_LOG_FILE=/absolute/path/ioc_enricher.jsonl     # optional, for telemetry (step 6)
 
-## Quick start
+Do not commit keys. The cache lives in ~/.ioc_enricher_cache of the user running Splunk, which must be writable.
 
-```bash
-git clone <this-repo>
-cd ioc-enricher
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+## 4. Install
+Copy the ioc_enricher folder to $SPLUNK_HOME/etc/apps/ and restart Splunk. If a command fails, check the
+search job inspector (search.log); per-IOC failures also show up as ioc_verdict=ERROR with the reason in ioc_detail.
 
-export ABUSEIPDB_API_KEY="..."   # any subset of these — unset ones are skipped gracefully
-export VT_API_KEY="..."
-export SHODAN_API_KEY="..."
-export OTX_API_KEY="..."
+## 5. Try it (no log data needed)
 
-python3 enrich.py 8.8.8.8
-```
+    | makeresults
+    | eval ioc=split("8.8.8.8,185.220.101.7,192.168.1.10,example.com", ",")
+    | mvexpand ioc
+    | iocenrich field=ioc
+    | table ioc ioc_verdict ioc_score ioc_confidence ioc_flagged_by ioc_sources ioc_adjustments
 
-See `SETUP.md` for full setup instructions, API key signup links, and all CLI flags.
+Real use:
 
-## Architecture
+    index=main sourcetype=access_combined
+    | stats count by clientip
+    | sort -count | head 10
+    | iocenrich field=clientip
+    | where ioc_verdict IN ("MALICIOUS","SUSPICIOUS")
 
-```
-enrich.py       CLI entry point — classifies input, fans out to sources, scores, reports
-ioc_type.py     Classifies input as IPv4 / domain / MD5 / SHA1 / SHA256
-sources/        One module per threat intel source, each behind the same check() interface
-reliability.py  Shared rate limiter + retry + circuit breaker, wraps every source call
-scorer.py       Combines source verdicts into one weighted score (config in scoring.yaml)
-cache.py        TTL cache, file or SQLite backend
-logger.py       Structured logging setup (console + optional JSON file)
-report.py       Output formatting — rich table or JSON
-```
+Notes: private IPs return NOT_ROUTABLE without an API call; allowlisted values return CLEAN; at most limit=25
+distinct values are looked up per search (VirusTotal free tier is about 4 requests per minute, and results are cached).
 
-Every source module (`sources/*.py`) follows the same shape: check IOC type applicability → check API key present → check cache → call the API → normalize the response into `{source, malicious, confidence, summary}` → cache it. This makes adding a 5th source a matter of copying the pattern, not redesigning anything.
+## 6. Enricher telemetry and history
+Set IOC_ENRICHER_LOG_FILE, then add that file as a monitor input (Settings > Add Data > Monitor) with sourcetype
+ioc_enricher:json. The pipeline already logs one "verdict reached" event per lookup (ioc, ioc_type, verdict, score,
+confidence, flagged_by), so you get history for free:
 
-## Running tests
+    sourcetype=ioc_enricher:json message="verdict reached" | timechart count by verdict
+    sourcetype=ioc_enricher:json message="verdict reached" verdict=MALICIOUS | stats count by ioc
+    sourcetype=ioc_enricher:json message="circuit breaker opened" | timechart count by source
+    sourcetype=ioc_enricher:json message="source call failed after retries" | stats count by source error
 
-```bash
-python3 -m pytest -v
-```
+## 7. Tune the scoring with real data
+    ioc-enrich --batch bad.txt  --label malicious --dump-dataset dataset.jsonl
+    ioc-enrich --batch good.txt --label benign    --dump-dataset dataset.jsonl
+    python evaluate.py dataset.jsonl
 
-No API keys or network access required — every source is tested against mocked HTTP responses (`respx`), covering success, 404, error, and missing-key paths for each.
-
-## Honest limitations
-
-- Free-tier API limits cap real-world throughput (VirusTotal: 500/day, 4/min)
-- Scoring weights are an engineered heuristic, not a data-validated model
-- This is a portfolio/small-team tool, not a replacement for commercial threat intel platforms
+Allowlisted IOCs are skipped in the dump, so pick benign examples that are not on allowlist.txt.
+Known-bad IPs from public blocklists are also what AbuseIPDB and VirusTotal learn from, so recall will look
+better than it would on fresh indicators. Say so in the writeup.

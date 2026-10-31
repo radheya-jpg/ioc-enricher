@@ -29,7 +29,7 @@ ioc-enrich = "enrich:main"
 [tool.setuptools]
 py-modules = [
     "enrich", "config", "cache", "ioc_type", "scorer",
-    "report", "logger", "reliability",
+    "report", "logger", "reliability", "allowlist",
 ]
 
 [tool.setuptools.packages.find]

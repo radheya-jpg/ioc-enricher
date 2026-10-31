@@ -4,13 +4,12 @@
 # verdict thresholds sit. Edit this file and re-run — no code changes
 # or redeploy needed.
 #
-# source_weights: relative trust in each source's "malicious" signal.
+# IMPORTANT: every number below is a starting prior, not a validated value.
+# Run evaluate.py on a labelled dataset to check and tune them.
+#
+# source_weights: default trust in each source's "malicious" signal.
 #   Higher = counts for more in the combined score. 1.0 is neutral.
 #   A source not listed here defaults to 1.0 (see scorer.py fallback).
-#
-# thresholds: the combined score (0.0-1.0) needed to reach each verdict.
-#   Must be in descending order. "malicious" is checked first, then
-#   "suspicious"; anything below "suspicious" is CLEAN.
 
 source_weights:
   AbuseIPDB: 1.0
@@ -24,6 +23,40 @@ source_weights:
   # complementary fix (known-benign entries skip scoring entirely).
   OTX: 0.4
 
+# type_weights: per-IOC-type overrides of source_weights. Sources not listed
+#   for a type keep their default above. Keys: ipv4, domain, md5, sha1,
+#   sha256, or "hash" (applies to all three hash types; an exact type wins).
+type_weights:
+  ipv4:
+    AbuseIPDB: 1.2    # purpose-built for IP abuse reports
+    VirusTotal: 1.0
+    Shodan: 0.3       # open ports are exposure context, not evidence of malice
+    OTX: 0.5
+  domain:
+    VirusTotal: 1.4   # many engines actively classify domains
+    OTX: 0.4
+  hash:
+    VirusTotal: 1.5   # multi-engine consensus is the authoritative file signal
+    OTX: 0.5
+
+# corroboration: when several sources independently flag the indicator, add a
+#   small bonus to the combined score. Set per_extra_source to 0 to disable.
+#   bonus = min(max_bonus, per_extra_source * (sources_flagging - 1))
+corroboration:
+  per_extra_source: 0.08
+  max_bonus: 0.16
+
+# strong_signal: a source whose weight is at least min_source_weight and whose
+#   confidence is at least min_confidence guarantees the verdict is never
+#   below SUSPICIOUS, even if the other sources know nothing about the
+#   indicator. Set min_confidence above 1 (e.g. 99) to disable.
+strong_signal:
+  min_source_weight: 1.0
+  min_confidence: 0.85
+
+# thresholds: the combined score (0.0-1.0) needed to reach each verdict.
+#   "malicious" is checked first, then "suspicious"; anything below
+#   "suspicious" is CLEAN.
 thresholds:
   malicious: 0.7
   suspicious: 0.35
