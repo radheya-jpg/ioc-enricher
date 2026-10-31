@@ -1,75 +1,110 @@
-# IOC Enricher for Splunk
+# IOC Enricher
 
-Adds `| iocenrich field=<field>` to Splunk search, plus a sourcetype for the enricher JSON log.
-Tested end to end through Splunk chunked protocol with stub sources; not yet tested inside a real Splunk instance.
+A Python command-line tool that takes one Indicator of Compromise (IP address, domain, URL or file hash), asks several public threat intelligence services about it, and combines their answers into a single score and verdict. It can also be used inside Splunk as a custom search command.
 
-## 1. Prepare the project (once)
-- Use the patched `enrich.py` (passes the IOC type to the scorer, adds `--dump-dataset`).
-- Use the patched `pyproject.toml`: `allowlist` was missing from `py-modules`, so an installed `ioc-enrich` would fail with ModuleNotFoundError.
-- Copy your `scoring.yaml` (already in `default/`) and `allowlist.txt` next to each other in `default/`. pip does not install data files, and the command points the enricher at these copies.
+Mini Project (BSC4PR05A), B.Sc. Computer Science (Cybersecurity Honours), MIT World Peace University, Pune, 2026-27.
 
-## 2. Vendor dependencies into lib/
-Splunk runs the command with its own bundled Python, so dependencies must ship inside the app.
+**Authors:** Radheya Shahane and Zawiya Anant
 
-    $SPLUNK_HOME/bin/splunk cmd python --version        # note the version, probably 3.9
-    cd ioc_enricher
-    pip install --target lib splunk-sdk
-    pip install --target lib --python-version 3.9 --only-binary=:all: httpx click rich tenacity pyyaml
-    pip install --target lib --no-deps /path/to/ioc-enricher   # folder containing pyproject.toml
-    cp /path/to/ioc-enricher/allowlist.txt default/
+## Why
 
-Use the version printed on the first line for --python-version. Newer click and rich releases drop old Pythons.
+Analysts normally check one indicator by opening several portals by hand and comparing the answers in their heads. This is slow, and two analysts can reach different conclusions from the same data. IOC Enricher does the lookups together and applies written, adjustable scoring rules so the result is consistent.
 
-## 3. API keys
-Splunk child processes inherit the environment of splunkd. Add one NAME=value per line to
-$SPLUNK_HOME/etc/splunk-launch.conf, then restart Splunk:
+## Features
 
-    ABUSEIPDB_API_KEY=...
-    VT_API_KEY=...
-    SHODAN_API_KEY=...
-    OTX_API_KEY=...
-    IOC_ENRICHER_LOG_FILE=/absolute/path/ioc_enricher.jsonl     # optional, for telemetry (step 6)
+- Automatic indicator type detection (IP, domain, URL, hash), no flags needed
+- Queries VirusTotal, AlienVault OTX, Shodan and AbuseIPDB; a source without an API key is skipped and labelled
+- Weighted scoring with weights, thresholds, type weights, a corroboration bonus and a strong-signal floor kept in `scoring.yaml`
+- Verdicts: `CLEAN`, `suspicious`, `MALICIOUS`, `NOT_ROUTABLE` (private addresses)
+- Colour terminal output with a verdict panel and a per-source table
+- Retry with back-off, caching, and one JSON log line per run
+- Splunk search command: `| iocenrich field=<name>`
+- Evaluation script that prints precision, recall, F1, a threshold sweep and a source ablation over a labelled IOC set
 
-Do not commit keys. The cache lives in ~/.ioc_enricher_cache of the user running Splunk, which must be writable.
+## Project layout
 
-## 4. Install
-Copy the ioc_enricher folder to $SPLUNK_HOME/etc/apps/ and restart Splunk. If a command fails, check the
-search job inspector (search.log); per-IOC failures also show up as ioc_verdict=ERROR with the reason in ioc_detail.
+| Module | Role |
+|---|---|
+| `enrich` | Orchestrates one lookup |
+| `config` | Reads environment variables and YAML settings |
+| `ioc_type` | Detects the indicator type |
+| `sources/` | One module per threat intelligence service |
+| `cache`, `reliability` | Caching, retries and back-off |
+| `scorer` | Turns per-source confidence values into a score and verdict using `scoring.yaml` |
+| `report` | Rich terminal output |
+| `logger` | Appends JSON lines to the log file |
 
-## 5. Try it (no log data needed)
+## Installation
 
-    | makeresults
-    | eval ioc=split("8.8.8.8,185.220.101.7,192.168.1.10,example.com", ",")
-    | mvexpand ioc
-    | iocenrich field=ioc
-    | table ioc ioc_verdict ioc_score ioc_confidence ioc_flagged_by ioc_sources ioc_adjustments
+Requires Python 3 and at least one API key. More keys mean more sources in the verdict.
 
-Real use:
+```bash
+git clone <repository-url>
+cd <repository-folder>
+python3 -m venv venv
+source venv/bin/activate
+pip install -e .
+```
 
-    index=main sourcetype=access_combined
-    | stats count by clientip
-    | sort -count | head 10
-    | iocenrich field=clientip
-    | where ioc_verdict IN ("MALICIOUS","SUSPICIOUS")
+Dependencies: httpx, click, rich, tenacity, PyYAML.
 
-Notes: private IPs return NOT_ROUTABLE without an API call; allowlisted values return CLEAN; at most limit=25
-distinct values are looked up per search (VirusTotal free tier is about 4 requests per minute, and results are cached).
+## Configuration
 
-## 6. Enricher telemetry and history
-Set IOC_ENRICHER_LOG_FILE, then add that file as a monitor input (Settings > Add Data > Monitor) with sourcetype
-ioc_enricher:json. The pipeline already logs one "verdict reached" event per lookup (ioc, ioc_type, verdict, score,
-confidence, flagged_by), so you get history for free:
+API keys are read from environment variables, never from source code.
 
-    sourcetype=ioc_enricher:json message="verdict reached" | timechart count by verdict
-    sourcetype=ioc_enricher:json message="verdict reached" verdict=MALICIOUS | stats count by ioc
-    sourcetype=ioc_enricher:json message="circuit breaker opened" | timechart count by source
-    sourcetype=ioc_enricher:json message="source call failed after retries" | stats count by source error
+```bash
+export VT_API_KEY=<your-key-here>
+export OTX_API_KEY=<your-key-here>
+export SHODAN_API_KEY=<your-key-here>
+```
 
-## 7. Tune the scoring with real data
-    ioc-enrich --batch bad.txt  --label malicious --dump-dataset dataset.jsonl
-    ioc-enrich --batch good.txt --label benign    --dump-dataset dataset.jsonl
-    python evaluate.py dataset.jsonl
+Do not commit real keys. If a key is exposed anywhere, regenerate it.
 
-Allowlisted IOCs are skipped in the dump, so pick benign examples that are not on allowlist.txt.
-Known-bad IPs from public blocklists are also what AbuseIPDB and VirusTotal learn from, so recall will look
-better than it would on fresh indicators. Say so in the writeup.
+## Usage
+
+```bash
+ioc-enrich 8.8.8.8
+ioc-enrich evil-domain.com
+ioc-enrich 44d88612fea8a8f36de82e1278abb02f
+ioc-enrich --help
+```
+
+The output has a verdict panel (verdict, score, how many sources flagged the indicator) and a table with one row per source: status, the source's own opinion, confidence from 0.00 to 1.00, and a one-line summary. Do not over-trust a clean verdict that comes from a single source.
+
+## Splunk
+
+With the tool installed on the same host as Splunk, the enrichment is available as a search command:
+
+```
+| makeresults
+| eval ioc=split("8.8.8.8,185.220.101.7,192.168.1.10,example.com", ",")
+| mvexpand ioc
+| iocenrich field=ioc
+| table ioc ioc_verdict ioc_score ioc_confidence ioc_flagged_by ioc_sources ioc_adjustments
+```
+
+The JSON log file can be added as a monitored input to analyse verdicts over time.
+
+## Scoring
+
+Each source returns a confidence between 0 and 1. The scorer combines them with a weighted average, using source weights from `scoring.yaml`, then applies type weights, a corroboration bonus and a strong-signal floor. Thresholds in the same file map the score to a verdict. Edit `scoring.yaml` to change how much each source is trusted.
+
+## Evaluation
+
+On a small labelled set of 6 indicators (5 malicious, 1 benign), the current `scoring.yaml` gives precision 1.00, recall 1.00 and F1 1.00. This set is small, so treat the result as a sanity check and not as proof of general accuracy.
+
+## Troubleshooting
+
+| Symptom | What to do |
+|---|---|
+| `skipped: no API key configured` | Set that source's environment variable in the current terminal |
+| `skipped: not an IPv4 address` | Expected for domains, URLs and hashes on IP-only sources |
+| Slow run or repeated failures | Check the connection; a free-tier limit may have been reached |
+
+## Limitations
+
+Free-tier API rate limits apply, and the labelled evaluation set is small. See the project report for the full discussion and future enhancements.
+
+## References
+
+VirusTotal, AlienVault OTX, Shodan and AbuseIPDB API documentation; Splunk developer documentation on custom search commands; HTTPX documentation.
